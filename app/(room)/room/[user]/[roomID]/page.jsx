@@ -25,7 +25,7 @@ export default function roomPage() {
   const [width, setWidth] = useState(420);
   const [isResizing, setIsResizing] = useState(false);
   const [isDone, setIsDone] = useState(false);
-  const user = useRef(false);
+  const user = useRef(null);
 
   const resizing = (val) => {
     setIsResizing(val ?? !this.isResizing);
@@ -59,7 +59,7 @@ export default function roomPage() {
     [createAnswer]
   );
   const remoteAnswer = useCallback(
-    async ({ answer, sender, receiver }) => {
+    async ({ answer }) => {
       await setRemoteAnswer(answer);
       icecandidate();
     },
@@ -84,9 +84,9 @@ export default function roomPage() {
   };
   const icecandidate = () => {
     if (peer) {
-      peer.onicecandidate = (event) => {
-        if (event.candidate) {
-          socket.emit("local-icecandidate", event.candidate);
+      peer.onicecandidate = (e) => {
+        if (e.candidate) {
+          socket.emit("local-icecandidate", { candidate: e.candidate, roomID });
         }
       };
     }
@@ -101,68 +101,70 @@ export default function roomPage() {
   };
 
   useEffect(() => {
+    let send;
+    let receive;
+
     const setupListeners = () => {
+      socket.emit("join-room", { roomID });
       socket.on("remote-offer", remoteOffer);
       socket.on("remote-answer", remoteAnswer);
-      socket.on("remote-icecandidate", remoteIcecandidate);
+      socket.on(`remote-icecandidate`, remoteIcecandidate);
 
-      startLocalStream();
-      icecandidate();
-      setPeerTrackListener();
-      setTimeout(() => {
-        setIsDone(true);
-      }, 2000);
+      const caller = query.get("receiver");
+      if (receive && caller) {
+        startCall({ sender: send, receiver: receive });
+      }
     };
 
-    if (socket.connected) {
-      setupListeners();
-    } else {
-      socket.on("connect", () => {
+    const getUser = async () => {
+      try {
+        if (!user.current) user.current = await authUser();
+        const { email } = user.current;
+        const { permission, message, sender, receiver } =
+          await userApi.checkRoom({ email, socketID: socket.id, roomID });
+
+        if (permission) {
+          send = sender;
+          receive = receiver;
+        } else {
+          router.push("/profile");
+          toast.success(message);
+        }
+      } catch (error) {
+        console.error("User fetch failed", error);
+      }
+    };
+
+    const initialize = async () => {
+      await getUser();
+
+      if (socket.connected) {
         setupListeners();
-        socket.off("connect");
-      });
-    }
+      } else {
+        socket.on("connect", () => {
+          setupListeners();
+          socket.off("connect");
+        });
+      }
+    };
+
+    startLocalStream();
+    icecandidate();
+    setPeerTrackListener();
+    initialize();
 
     return () => {
-      socket.off("remote-offer", remoteOffer);
-      socket.off("remote-answer", remoteAnswer);
-      socket.off("remote-icecandidate", remoteIcecandidate);
+      if (user?.current?._id) {
+        socket.off("remote-offer", remoteOffer);
+        socket.off("remote-answer", remoteAnswer);
+        socket.off(
+          // `remote-icecandidate-${user.current._id}`,
+          `remote-icecandidate`,
+          remoteIcecandidate
+        );
+      }
     };
   }, []);
-
-  useEffect(() => {
-    if (isDone) {
-      const callRoom = async () => {
-        try {
-          const { email } = user.current;
-          const { permission, message, sender, receiver } =
-            await userApi.checkRoom({
-              email,
-              socketID: socket.id,
-              roomID,
-            });
-          if (permission) {
-            const caller = query.get("receiver");
-            if (receiver && caller) {
-              startCall({ sender, receiver });
-            }
-          } else {
-            router.push("/profile");
-            toast.success(message);
-          }
-        } catch (error) {
-          console.error(error);
-        }
-      };
-      const getUser = async () => {
-        try {
-          if (!user.current) user.current = await authUser();
-          await callRoom();
-        } catch (error) {}
-      };
-      getUser();
-    }
-  }, [isDone]);
 
   return (
     <div

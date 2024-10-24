@@ -15,9 +15,12 @@ export default async function ProfileMenu() {
               src={user.avatar}
               className="size-20 object-cover rounded-full"
             />
-            <h1 className="text-3xl font-black">
-              <span className="font-normal">Hi</span> {user.name}
-            </h1>
+            <div>
+              <h1 className="text-3xl font-black">
+                <span className="font-normal">Hi</span> {user.name}
+              </h1>
+              <p>{user.email}</p>
+            </div>
           </div>
           <div>
             <CreateRoom />
